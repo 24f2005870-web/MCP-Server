@@ -8,7 +8,6 @@ from starlette.types import ASGIApp, Scope, Receive, Send
 
 EMAIL = "24f2005870@ds.study.iitm.ac.in"
 
-# Isolated per HTTP request, including concurrent calls.
 request_headers = contextvars.ContextVar("request_headers", default={})
 
 
@@ -16,9 +15,7 @@ class HeaderCapture:
     def __init__(self, app: ASGIApp):
         self.app = app
 
-    async def __call__(
-        self, scope: Scope, receive: Receive, send: Send
-    ):
+    async def __call__(self, scope: Scope, receive: Receive, send: Send):
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
@@ -35,31 +32,28 @@ class HeaderCapture:
             request_headers.reset(token)
 
 
-mcp = FastMCP("Exam Challenge Server", json_response=True)
+# In MCP SDK 1.30, configure these options on FastMCP.
+mcp = FastMCP(
+    "Exam Challenge Server",
+    stateless_http=True,
+    json_response=True,
+)
 
 
 @mcp.tool()
 def solve_challenge() -> str:
-    """Return the SHA-256 challenge response from the current HTTP headers."""
-    headers = request_headers.get()
-    challenge = headers.get("x-exam-challenge")
+    """Hash the fresh challenge provided in the HTTP request headers."""
+    challenge = request_headers.get().get("x-exam-challenge")
 
     if not challenge:
         raise ValueError("Missing X-Exam-Challenge header")
 
-    result = hashlib.sha256(
-        f"{challenge}:{EMAIL.strip().lower()}".encode("utf-8")
-    ).hexdigest()[:16]
-
-    return result
+    message = f"{challenge}:{EMAIL.strip().lower()}"
+    return hashlib.sha256(message.encode("utf-8")).hexdigest()[:16]
 
 
-# Use the SDK's MCP endpoint and capture headers on each HTTP request.
-mcp_app = mcp.streamable_http_app(
-    stateless_http=True,
-    json_response=True,
-    host="0.0.0.0",
-)
+# The app method receives the host, not stateless_http.
+mcp_app = mcp.streamable_http_app(host="0.0.0.0")
 app = HeaderCapture(mcp_app)
 
 
